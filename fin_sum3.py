@@ -53,7 +53,7 @@ def get_tou_rate(hour, tou_df):
                 return period
     return tou_df.iloc[0]
 
-# 3. GELİŞMİŞ ENERJİ YÖNETİM ALGORİTMASI - SON VERSİYON
+# 3. GELİŞMİŞ ENERJİ YÖNETİM ALGORİTMASI - HATALAR DÜZELTİLDİ
 def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season='summer'):
     """Geliştirilmiş kural tabanlı algoritma - TÜM HATALAR DÜZELTİLDİ"""
     
@@ -74,7 +74,10 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
     # Başlangıç durumları
     battery_soc = params['battery']['soc_initial']
     ev_soc = params['ev']['soc_initial']
-    ac_setpoint = params['ac']['comfort_max_summer']  # Konfor bandında başla
+    ac_setpoint = (params['ac']['comfort_max_winter'] 
+               if season == 'winter' 
+               else params['ac']['comfort_max_summer'])
+
     
     # PV verisi
     pv_generation = pv_df[f'{season}_kw'].tolist()
@@ -92,16 +95,18 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
         # 1. Öncelik: Lokal tüketim
         net_load_after_pv = total_load_baseline - remaining_pv
         if net_load_after_pv < 0:
-            remaining_pv = -net_load_after_pv
+            remaining_pv = abs(net_load_after_pv)  # PV fazlası var, EV/batarya kullanabilir
             net_load_after_pv = 0
         else:
-            remaining_pv = 0
+            remaining_pv = 0  # sadece PV yetersizse sıfırla
+
         
         # 2. Öncelik: EV şarj (SERT KISIT İÇİN KRİTİK)
         ev_plugged_in = (hour >= 18 or hour < 7)
         if remaining_pv > 0 and ev_plugged_in and ev_soc < params['ev']['soc_required_morning']:
-            charge_power = min(remaining_pv, params['ev']['max_charge_rate_kw'],
-                             (params['ev']['soc_required_morning'] - ev_soc) * params['ev']['capacity_kwh'])
+            energy_needed = (params['ev']['soc_required_morning'] - ev_soc) * params['ev']['capacity_kwh']
+            charge_power = min(remaining_pv, params['ev']['max_charge_rate_kw'], energy_needed / 1.0)  # kWh→kW sadeleştirme
+
             ev_soc += charge_power / params['ev']['capacity_kwh'] * params['ev']['efficiency_charge']
             remaining_pv -= charge_power
         
@@ -109,7 +114,10 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
         if remaining_pv > 0 and battery_soc < params['battery']['soc_max']:
             charge_power = min(remaining_pv, params['battery']['max_charge_rate_kw'],
                              (params['battery']['soc_max'] - battery_soc) * params['battery']['capacity_kwh'])
-            battery_soc += charge_power / params['battery']['capacity_kwh'] * params['battery']['efficiency']
+            
+            # DÜZELTME: Batarya şarj verimliliği eklendi
+            actual_charge = charge_power * params['battery']['efficiency']
+            battery_soc += actual_charge / params['battery']['capacity_kwh']
             remaining_pv -= charge_power
         
         # 4. Kalan PV şebekeye
@@ -127,17 +135,25 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
         
         if load_threshold_violation:
             # AC setpoint'i kademeli artır ama konfor bandını çok aşma
-            new_setpoint = min(25.5, ac_setpoint + 0.1)  # Çok yavaş artış, maks 25.5°C
-            if new_setpoint <= 25.5:
+            new_setpoint = min(24.5, ac_setpoint + 0.03)  # Daha yavaş, daha düşük maksimum
+
+            # VE:
+            ac_setpoint = max(params['ac']['comfort_max_summer'], ac_setpoint - 0.4)  # Daha hızlı düşüş            
+            
+            
+            if new_setpoint <= 25.0:
                 ac_setpoint = new_setpoint
                 savings = params['ac']['savings_percentage_per_degree']
-                degrees_above = ac_setpoint - params['ac']['comfort_max_summer']
+                degrees_above = max(0, ac_setpoint - params['ac']['comfort_max_summer'])
+                # DÜZELTME: c_power yerine ac_power kullanıldı
                 ac_power = max(1.5, params['ac']['nominal_power_kw'] * (1 - savings * degrees_above))
+
         else:
             # Konfor bandına dön
-            ac_setpoint = max(params['ac']['comfort_max_summer'], ac_setpoint - 0.2)
+            ac_setpoint = max(params['ac']['comfort_max_summer'], ac_setpoint - 0.3)  # DÜZELTME: Daha hızlı düşüş
             savings = params['ac']['savings_percentage_per_degree']
-            degrees_above = ac_setpoint - params['ac']['comfort_max_summer']
+            degrees_above = max(0, ac_setpoint - params['ac']['comfort_max_summer'])
+            # DÜZELTME: c_power yerine ac_power kullanıldı
             ac_power = max(1.5, params['ac']['nominal_power_kw'] * (1 - savings * degrees_above))
         
         total_load_final = baseline_load + ac_power
@@ -153,8 +169,12 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
             
             charge_power = min(-net_load_final, params['battery']['max_charge_rate_kw'],
                             (params['battery']['soc_max'] - battery_soc) * params['battery']['capacity_kwh'])
+            
+            # DÜZELTME: Batarya şarj verimliliği eklendi
+            actual_charge = charge_power * params['battery']['efficiency']
+            battery_soc += actual_charge / params['battery']['capacity_kwh']
+            
             net_load_final += charge_power
-            battery_soc += charge_power / params['battery']['capacity_kwh'] * params['battery']['efficiency']
             print(f"      🔋 Batarya şarj: {charge_power:.2f} kW, Yeni SOC: {battery_soc*100:.1f}%")
 
         # 2. Akşam deşarj (17:00-22:00) - ÖDEV ŞARTI!
@@ -167,8 +187,11 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
                                 (battery_soc - params['battery']['soc_min']) * params['battery']['capacity_kwh'] * 0.6)  # Max %60
             
             if discharge_power > 0.5:  # Minimum deşarj eşiği
+                # DÜZELTME: Batarya deşarj verimliliği eklendi
+                actual_discharge = discharge_power * params['battery']['efficiency']
+                battery_soc -= actual_discharge / params['battery']['capacity_kwh']
+                
                 net_load_final -= discharge_power
-                battery_soc -= discharge_power / params['battery']['capacity_kwh']
                 print(f"      🔋 Batarya deşarj: {discharge_power:.2f} kW, Yeni SOC: {battery_soc*100:.1f}%")
 
         # 3. Pik saatlerde destek (TOU Peak)
@@ -177,8 +200,12 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
             
             discharge_power = min(net_load_final, params['battery']['max_discharge_rate_kw'],
                                 (battery_soc - params['battery']['soc_min']) * params['battery']['capacity_kwh'] * 0.3)
+            
+            # DÜZELTME: Batarya deşarj verimliliği eklendi
+            actual_discharge = discharge_power * params['battery']['efficiency']
+            battery_soc -= actual_discharge / params['battery']['capacity_kwh']
+            
             net_load_final -= discharge_power
-            battery_soc -= discharge_power / params['battery']['capacity_kwh']
         
         # EV Yönetimi (V2G) - kontrollü deşarj
         if (ev_plugged_in and net_load_final > 0 and current_tou['period'] == 'Peak' and 
@@ -186,13 +213,17 @@ def advanced_energy_management(hours, devices_df, pv_df, tou_df, params, season=
             ev_soc > params['ev']['soc_required_morning']):
             discharge_power = min(net_load_final, params['ev']['max_discharge_rate_kw'],
                                 (ev_soc - params['ev']['soc_min']) * params['ev']['capacity_kwh'] * 0.3)
+            
+            # DÜZELTME: EV deşarj verimliliği eklendi
+            ev_soc -= discharge_power / params['ev']['capacity_kwh'] / params['ev']['efficiency_discharge']
+            
             net_load_final -= discharge_power
-            ev_soc -= discharge_power / params['ev']['capacity_kwh']
         
         # E. GECE EV ŞARJI - SERT KISIT GARANTİSİ
         if ev_plugged_in and current_tou['period'] == 'Night' and ev_soc < params['ev']['soc_required_morning']:
             charge_needed = (params['ev']['soc_required_morning'] - ev_soc) * params['ev']['capacity_kwh']
-            charge_power = min(params['ev']['max_charge_rate_kw'], charge_needed, 5.0)  # Maks 5kW
+            charge_power = min(params['ev']['max_charge_rate_kw'], charge_needed)
+
             net_load_final += charge_power
             ev_soc += charge_power / params['ev']['capacity_kwh'] * params['ev']['efficiency_charge']
         
@@ -260,7 +291,9 @@ def create_final_plots(results, params, season='summer'):
     # 3. ŞEBEKE ETKİLEŞİMİ
     hours = results['hour']
     ax3.bar(hours, results['grid_import'], alpha=0.7, label='Sebekeden Cekilen', color='red')
-    ax3.bar(hours, [-x for x in results['grid_export']], alpha=0.7, label='Sebekeye Verilen', color='green')
+    if any(x > 0 for x in results['grid_export']):
+        ax3.bar(hours, [-x for x in results['grid_export']], alpha=0.7, label='Sebekeye Verilen', color='green')
+
     ax3.set_xlabel('Saat')
     ax3.set_ylabel('Guc (kW)')
     ax3.set_title('Sebeke Etkilesimi')
@@ -270,10 +303,18 @@ def create_final_plots(results, params, season='summer'):
     
     # 4. KONFOR ANALİZİ
     ax4.plot(results['hour'], results['ac_setpoint'], 'b-', label='AC Setpoint', linewidth=2)
-    ax4.axhline(y=params['ac']['comfort_min_summer'], color='r', linestyle='--', label='Konfor Alt Sinir', alpha=0.7)
-    ax4.axhline(y=params['ac']['comfort_max_summer'], color='r', linestyle='--', label='Konfor Ust Sinir', alpha=0.7)
-    ax4.fill_between(results['hour'], params['ac']['comfort_min_summer'], params['ac']['comfort_max_summer'], 
-                     alpha=0.2, color='green', label='Konfor Bandi')
+    if season == 'winter':
+        comfort_min = params['ac']['comfort_min_winter']
+        comfort_max = params['ac']['comfort_max_winter']
+    else:
+        comfort_min = params['ac']['comfort_min_summer']
+        comfort_max = params['ac']['comfort_max_summer']
+
+    ax4.axhline(y=comfort_min, color='r', linestyle='--', label='Konfor Alt Sinir', alpha=0.7)
+    ax4.axhline(y=comfort_max, color='r', linestyle='--', label='Konfor Ust Sinir', alpha=0.7)
+    ax4.fill_between(results['hour'], comfort_min, comfort_max, 
+                    alpha=0.2, color='green', label='Konfor Bandi')
+
     ax4.set_xlabel('Saat')
     ax4.set_ylabel('Sicaklik (°C)')
     ax4.set_title('Konfor Analizi')
@@ -286,9 +327,9 @@ def create_final_plots(results, params, season='summer'):
     plt.savefig(f'final_results_{season}.png', dpi=300, bbox_inches='tight')
     plt.show()
 
-# 5. DETAYLI RAPOR - HATA DÜZELTİLDİ
+# 5. DETAYLI RAPOR
 def generate_comprehensive_report(results, params, season='summer'):
-    """Kapsamlı rapor oluştur - EV SOC hatası düzeltildi"""
+    """Kapsamlı rapor oluştur"""
     
     season_tr = 'YAZ' if season == 'summer' else 'KIS'
     print(f"\n{'='*60}")
@@ -308,7 +349,7 @@ def generate_comprehensive_report(results, params, season='summer'):
     
     comfort_violations = sum(1 for temp in results['ac_setpoint'] if temp > params['ac']['comfort_max_summer'])
     
-    # EV HEDEF KONTROLÜ - HATA DÜZELTİLDİ
+    # EV HEDEF KONTROLÜ
     ev_morning_soc = results['ev_soc'][7]  # Sabah 07:00'deki SOC
     ev_target_met = ev_morning_soc >= params['ev']['soc_required_morning'] - 0.001
     
@@ -333,10 +374,9 @@ def generate_comprehensive_report(results, params, season='summer'):
     print(f"   • PV Uretimi: {sum(results['pv_generation']):.1f} kWh")
     print(f"   • Kendine Yeterlilik: {(sum(results['pv_generation'])/sum(results['baseline_load'])*100):.1f}%")
 
-# 6. DUYARLILIK ANALİZİ - HATA DÜZELTİLDİ
-# 6. DUYARLILIK ANALİZİ - SON DÜZELTME
+# 6. DUYARLILIK ANALİZİ
 def sensitivity_analysis_ac(hours, devices_df, pv_df, tou_df, params):
-    """AC tasarruf oranı duyarlılık analizi - TÜM HATALAR DÜZELTİLDİ"""
+    """AC tasarruf oranı duyarlılık analizi"""
     
     print(f"\n{'='*50}")
     print(f"🔬 AC TASARRUF ORANI DUYARLILIK ANALIZI")
@@ -356,7 +396,7 @@ def sensitivity_analysis_ac(hours, devices_df, pv_df, tou_df, params):
         peak_after = max(results['final_load'])
         comfort_violations = sum(1 for temp in results['ac_setpoint'] if temp > params['ac']['comfort_max_summer'])
         
-        # EV HEDEF KONTROLÜ - SON DÜZELTME
+        # EV HEDEF KONTROLÜ
         ev_morning_soc = results['ev_soc'][7]
         ev_target_met = ev_morning_soc >= params['ev']['soc_required_morning'] - 0.001
         
