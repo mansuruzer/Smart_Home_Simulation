@@ -1,0 +1,15 @@
+ (Hard Constraints) - ZORUNLU
+EV SOC ≥ %70 sabah 07:00'de - Araç kullanım garantisi
+EV SOC ≥ %20 (gün boyu) - Batarya sağlığı ve güvenlik
+Batarya SOC ≥ %20 - Batarya ömrü koruması
+Cihazlar kendi zaman pencerelerinde çalışmalı - Kullanıcı ihtiyaçları
+Fırın 18:00-20:00 arası çalışmalı - Akşam yemeği hazırlığı
+Çamaşır makinesi 22:00'den önce bitmeli - Gürültü kısıtlaması
+
+(Soft Constraints) - ESNEK
+Konfor bandı 21-24°C - İdeal sıcaklık aralığı
+Gürültülü cihazlar 22:00 sonrası kullanılmamalı - Konfor için
+Küçük AC sapmaları ±0.5°C tolere edilebilir - Enerji tasarrufu için
+EV şarjı ideal olarak gece tamamlanmalı - Şebeke yükü dağılımı
+Bulaşık makinesi 22:00'de bitmeli (23:00'e kadar esnek) - Kullanıcı tercihi
+Ortalama AC setpoint 24.0°C'yi aşmamalı - Konfor dengesi
