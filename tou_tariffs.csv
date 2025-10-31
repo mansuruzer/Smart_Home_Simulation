@@ -1,0 +1,5 @@
+period,start_time,end_time,rate_per_kwh_tl
+Night,00:00,06:00,1.5
+Day,06:00,17:00,3.0
+Peak,17:00,22:00,5.0
+Night,22:00,00:00,1.5

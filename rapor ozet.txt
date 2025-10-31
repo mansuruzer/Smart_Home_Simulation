@@ -1,0 +1,17 @@
+## Batarya Yönetim Stratejisi
+
+### Uygulanan Algorithm:
+1. **Gündüz Şarj (08:00-16:00)**: PV üretim fazlası ile batarya şarj edilir
+2. **Akşam Deşarj (17:00-22:00)**: Ödev gereği bu saatlerde batarya aktif kullanılır
+3. **Pik Saat Desteği**: TOU pik saatlerinde ek destek sağlanır
+
+### Grafik Yorumu:
+Batarya SOC grafiğinde görülen değişimler:
+- **Gündüz**: PV ile şarj → SOC artışı
+- **Akşam**: 17:00-22:00 deşarj → SOC azalışı  
+- **Gece**: Sabit bekleme → SOC koruma
+
+Bu strateji ile:
+✅ Ödev şartları sağlandı (17:00-22:00 batarya kullanımı)
+✅ Batarya ömrü korundu (aşırı cycle önlendi)
+✅ EV ile koordinasyon sağlandı
